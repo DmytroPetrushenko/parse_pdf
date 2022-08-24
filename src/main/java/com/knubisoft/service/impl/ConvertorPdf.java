@@ -9,6 +9,8 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import lombok.SneakyThrows;
 import org.apache.pdfbox.io.RandomAccessFile;
@@ -22,13 +24,9 @@ public class ConvertorPdf implements Convertor {
     public <T> List<T> getDataFromSource(FileReadSource source, Class<T> clazz) {
         File file = source.getFile();
         String string = parsePdfToString(file);
-
         List<String> stringList = Arrays.stream(string.split("\\r\\n"))
                 .collect(Collectors.toList());
-        List<String> rows = getRows(stringList, clazz);
-        return rows.stream()
-                .map(row -> getEntity(row, clazz))
-                .collect(Collectors.toList());
+        return getListEntities(stringList, clazz);
     }
 
     @SneakyThrows
@@ -52,11 +50,12 @@ public class ConvertorPdf implements Convertor {
         field.set(instance, result);
     }
 
-    private List<String> getRows(List<String> stringList, Class<?> clazz) {
+    private <T> List<T> getListEntities(List<String> stringList, Class<T> clazz) {
         Map<String, String> fieldNameAndRegex = findFieldNameRegex(clazz);
-        String commonRegex = getCommonRegex(fieldNameAndRegex);
-        return stringList.stream()
-                .filter(string -> string.matches(commonRegex))
+        Pattern pattern = Pattern.compile(String.join(" ", fieldNameAndRegex.values()));
+        return  stringList.stream()
+                .filter(string -> pattern.matcher(string).find())
+                .map(string -> getEntity(string, clazz))
                 .collect(Collectors.toList());
     }
 
@@ -81,11 +80,5 @@ public class ConvertorPdf implements Convertor {
     private boolean checkingFieldAnnotation(Field field) {
         return Arrays.stream(field.getAnnotations())
                 .anyMatch(annotation -> annotation.annotationType().equals(Lookup.class));
-    }
-
-    private String getCommonRegex(Map<String, String> fieldNameAndRegex) {
-        return fieldNameAndRegex.values().stream()
-                .reduce((x, y) -> x + " " + y)
-                .orElseThrow(() -> new RuntimeException("the regex statements are absent!"));
     }
 }
