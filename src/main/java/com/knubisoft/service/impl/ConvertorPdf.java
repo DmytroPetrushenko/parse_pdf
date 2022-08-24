@@ -5,13 +5,12 @@ import com.knubisoft.dto.FileReadSource;
 import com.knubisoft.service.Convertor;
 import java.io.File;
 import java.lang.reflect.Field;
-import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 import lombok.SneakyThrows;
 import org.apache.pdfbox.io.RandomAccessFile;
 import org.apache.pdfbox.pdfparser.PDFParser;
@@ -24,39 +23,31 @@ public class ConvertorPdf implements Convertor {
     public <T> List<T> getDataFromSource(FileReadSource source, Class<T> clazz) {
         File file = source.getFile();
         String string = parsePdfToString(file);
-        List<String> stringList = Arrays.stream(string.split("\\r\\n"))
-                .collect(Collectors.toList());
-        return getListEntities(stringList, clazz);
+        return anotherWay(string, clazz);
     }
 
     @SneakyThrows
-    private <T> T getEntity(String row, Class<T> clazz) {
+    private <T> List<T> anotherWay(String string, Class<T> clazz) {
+        List<T> result = new ArrayList<>();
+        Map<String, String> regex = findFieldNameRegex(clazz);
+        String commonRegex = String.join(" ", regex.values());
+        Pattern pattern = Pattern.compile(commonRegex);
+        Matcher matcher = pattern.matcher(string);
+        while (matcher.find()) {
+            result.add(getEntity(clazz, regex, matcher));
+        }
+        return result;
+    }
+
+    @SneakyThrows
+    private <T> T getEntity(Class<T> clazz, Map<String, String> regex, Matcher matcher) {
         T instance = clazz.getConstructor().newInstance();
-        Map<String, String> fieldNameRegex = findFieldNameRegex(clazz);
-        fieldNameRegex.entrySet()
-                .forEach(entry -> fillUpField(entry, instance, row));
+        for (String name : regex.keySet()) {
+            Field field = clazz.getDeclaredField(name);
+            field.setAccessible(true);
+            field.set(instance, matcher.group(name).replaceAll("\\h", " "));
+        }
         return instance;
-    }
-
-    @SneakyThrows
-    private <T> void fillUpField(Map.Entry<String, String> entry, T instance, String row) {
-        Field field = instance.getClass().getDeclaredField(entry.getKey());
-        String result = Arrays.stream(row.split(" "))
-                .filter(value -> value.matches(entry.getValue()))
-                .map(value -> value.replaceAll("\\h", " "))
-                .findFirst()
-                .orElseThrow(() -> new RuntimeException("Regex was not fit"));
-        field.setAccessible(true);
-        field.set(instance, result);
-    }
-
-    private <T> List<T> getListEntities(List<String> stringList, Class<T> clazz) {
-        Map<String, String> fieldNameAndRegex = findFieldNameRegex(clazz);
-        Pattern pattern = Pattern.compile(String.join(" ", fieldNameAndRegex.values()));
-        return  stringList.stream()
-                .filter(string -> pattern.matcher(string).find())
-                .map(string -> getEntity(string, clazz))
-                .collect(Collectors.toList());
     }
 
     @SneakyThrows
@@ -70,15 +61,10 @@ public class ConvertorPdf implements Convertor {
     private Map<String, String> findFieldNameRegex(Class<?> clazz) {
         Map<String, String> resultMap = new LinkedHashMap<>();
         for (Field field : clazz.getDeclaredFields()) {
-            if (checkingFieldAnnotation(field)) {
+            if (field.isAnnotationPresent(Lookup.class)) {
                 resultMap.put(field.getName(), field.getAnnotation(Lookup.class).regex());
             }
         }
         return resultMap;
-    }
-
-    private boolean checkingFieldAnnotation(Field field) {
-        return Arrays.stream(field.getAnnotations())
-                .anyMatch(annotation -> annotation.annotationType().equals(Lookup.class));
     }
 }
